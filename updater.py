@@ -16,7 +16,7 @@ setup service stuff
 """
 
 def make_service(x='bigquery'):
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '/Users/tom/.client_secret.json'
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = '~/.client_secret.json'
     credentials = GoogleCredentials.get_application_default()
     service = build(x, 'v2', credentials=credentials)
     return service
@@ -56,8 +56,11 @@ class WORKING_PROJ(object):
     def tab_desc(self):
         self.table_frame['desc'] = self.table_frame.apply(lambda\
         i:self.service.tables().get(projectId = i['projectId'],\
-        datasetId=i['datasetId'],tableId=i['tableId']).execute(),axis=1)
-        self.table_frame['vars'] = self.table_frame['desc'].map(lambda i: [j['name'] for j in i['schema']['fields']])
+                                    datasetId=i['datasetId'],\
+                                    tableId=i['tableId']).execute(),axis=1)
+        self.table_frame['vars'] = self.table_frame['desc'].map(lambda\
+                                                i: [j['name'] for j in\
+                                                i['schema']['fields']])
         self.table_frame['locator'] = self.table_frame.loc[:,\
                                             'desc'].apply(lambda\
                                             i:i['id'])
@@ -66,46 +69,11 @@ class WORKING_PROJ(object):
 
 wp = WORKING_PROJ(service)
 wp.tab_desc()
-wp.table_frame.loc[wp.table_frame['datasetId']=='full','locator'][3]
-
-wp.table_frame.loc['desc'].apply(lambda i:i['id'])
-
-#
-# x = service.datasets()
-# gdelt_datasets = x.list(projectId=gdelt_project_id).execute()
-# gdelt_full_id = [i['id'] for i in gdelt_datasets['datasets'] if\
-#         re.match('.*full.*',i['id']) ][0]
-# gdelt_full_id_dataset_only = [i['datasetReference']['datasetId']\
-#         for i in gdelt_datasets['datasets'] if re.match('.*full.*',i['id']) ][0]
-#
-# gdelt_full_tables=service.tables()
-# gdelt_full_tables=gdelt_full_tables.list(datasetId=gdelt_full_id_dataset_only,                                projectId= gdelt_project_id).execute()
-#
-# gdelt_full_events_table = [i for i in gdelt_full_tables['tables']  if re.match(".*events.*",i['id'])][0]["id"]
-
-
-
-"""
-jobs object
-"""
-jerbs = service.jobs()
-
-
-"""
-Cameo codes for searching
-"""
-
 
 
 """
 import leaders
 """
-
-os.getcwd()
-dat = pd.read_csv("./current_office.csv")
-
-dat['LEADER'] = [i.split(' ')[-1].upper() for i in dat.actor1name]
-
 
 
 codes = {"1441": "Obstruct passage to demand leadership change",
@@ -122,10 +90,7 @@ def stringer(x=list()):
     return ', '.join('"{0}"'.format(w) for w in x)
 
 codestr = stringer(codes.keys())
-codestr
 
-codes.keys()
-myList = ['a','b','c','d']
 
 
 base_query = '''
@@ -157,40 +122,46 @@ base_query = '''
 
 
 
-wp.loc = wp.table_frame.loc[wp.table_frame['datasetId']=='full','locator'][3]
-
-query_requests = [{'query':base_query%(wp.loc,\
-                    codestr,\
-                    dat.loc[i,'LEADER'],\
-                    dat.loc[i,'actor1country']),\
-                    "leader":dat.loc[i,'LEADER'],"country":dat.loc[i,'actor1country']}\
-                    for i in range(len(dat))]
-query_requests
-for i,dx in enumerate(query_requests):
-    dx["req"]=jerbs.query(projectId=wp.proj_id,body={
-    "query":dx['query']
-      })
 
 
 
+class QueryRequest(object):
+    def __init__(self,base_query,leader,country,table='gdelt-bq:full.events'):
+        self.leader = leader
+        self.country = country
+        self.table = table
+        self.query = base_query%(self.table,\
+                            codestr,\
+                            self.leader,\
+                            self.country)
+        self.query_req = self.jerbs.query(projectId = self.wp.proj_id,\
+                        body = {'query':self.query})
+    def __str__(self):
+        return "%s\n%s\n%s"%(self.leader,self.country,self.query)
+    @classmethod
+    def service_assign(cls,service=wp.service,project=wp):
+        cls.service = service
+        cls.jerbs = service.jobs()
+        cls.wp = project
+# must be run to initialize the class attributes
+QueryRequest.service_assign()
 
 
-print query_requests[0]['query']
+
 
 
 
 
 class REQDF(object):
     def __init__(self,req):
-        self.country = req['country']
-        self.leader = req['leader']
+        self.req = req
         self.dat = ""
         self.schema = ""
-        self.query = req['query']
-        self.query_req = req['req']
         self.req_to_df()
         print self.leader
         print self.country
+    def __getattr__(self,attr):
+        return getattr(self.req,attr)
     def req_to_df(self):
         _query = self.query_req.execute()
         wait_time = 0
@@ -215,11 +186,22 @@ class REQDF(object):
         return self.dat
 
 
-x = REQDF(query_requests[0])
-x = []
-print x.query
-for i in query_requests:
-    x.append(REQDF(i).dat)
+
+if __name__ == '__main__':
+
+    os.getcwd()
+    dat = pd.read_csv("./current_office.csv")
+    dat['LEADER'] = [i.split(' ')[-1].upper() for i in dat.actor1name]
+    dat.N = dat.iloc[:,1].count()
+    all_reqs =[QueryRequest(base_query,\
+            dat.iloc[i]['LEADER'],\
+            dat.iloc[i]['actor1country']) for i in range(dat.N)]
 
 
-x
+    output = pd.DataFrame()
+    for i in all_reqs[:50]:
+        output = output.append(REQDF(i).dat)
+        # inefficiency here -- passing by value, but whatever.
+
+
+    output.to_csv('./out.csv')
